@@ -50,7 +50,7 @@ def _load_widget_html(component_name: str) -> str:
 
 CAROUSEL_WIDGET = PizzazWidget(
     identifier="pizza-carousel",
-    title="Show Pizza Carousel",
+    title="Show pizza spots",
     template_uri="ui://widget/pizza-carousel.html",
     invoking="Carousel some spots",
     invoked="Served a fresh carousel",
@@ -58,10 +58,21 @@ CAROUSEL_WIDGET = PizzazWidget(
     response_text="Rendered a pizza carousel!",
 )
 
+PAST_ORDERS_WIDGET = PizzazWidget(
+    identifier="pizzaz-list",
+    title="Past orders",
+    template_uri="ui://widget/pizzaz-list.html",
+    invoking="Fetching your recent orders",
+    invoked="Served recent orders",
+    html=_load_widget_html("pizzaz-list"),
+    response_text="Rendered past orders list!",
+)
+
 
 MIME_TYPE = "text/html+skybridge"
 
 SEARCH_TOOL_NAME = CAROUSEL_WIDGET.identifier
+PAST_ORDERS_TOOL_NAME = "see_past_orders"
 
 SEARCH_TOOL_SCHEMA: Dict[str, Any] = {
     "type": "object",
@@ -76,6 +87,48 @@ SEARCH_TOOL_SCHEMA: Dict[str, Any] = {
     "additionalProperties": False,
 }
 
+PAST_ORDERS_TOOL_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "title": "Past orders",
+    "properties": {
+        "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20,
+            "description": "Optional max number of past orders to return.",
+        }
+    },
+    "required": [],
+    "additionalProperties": False,
+}
+
+PAST_ORDERS_DATA = [
+    {
+        "orderId": "pz-4931",
+        "items": ["Classic Margherita", "Garlic knots"],
+        "status": "delivered",
+        "total": "$18.50",
+    },
+    {
+        "orderId": "pz-4810",
+        "items": ["Pepperoni Feast"],
+        "status": "delivered",
+        "total": "$15.00",
+    },
+    {
+        "orderId": "pz-4799",
+        "items": ["Veggie Garden", "Caesar salad"],
+        "status": "refunded",
+        "total": "$22.40",
+    },
+    {
+        "orderId": "pz-4750",
+        "items": ["Spicy Hawaiian"],
+        "status": "delivered",
+        "total": "$17.25",
+    },
+]
+
 DEFAULT_AUTH_SERVER_URL = "https://dev-65wmmp5d56ev40iy.us.auth0.com/"
 DEFAULT_RESOURCE_SERVER_URL = "http://localhost:8000/mcp"
 
@@ -83,7 +136,10 @@ DEFAULT_RESOURCE_SERVER_URL = "http://localhost:8000/mcp"
 AUTHORIZATION_SERVER_URL = AnyHttpUrl(
     os.environ.get("AUTHORIZATION_SERVER_URL", DEFAULT_AUTH_SERVER_URL)
 )
-RESOURCE_SERVER_URL = "https://945c890ee720.ngrok-free.app"
+RESOURCE_SERVER_URL = os.environ.get("RESOURCE_SERVER_URL", DEFAULT_RESOURCE_SERVER_URL)
+
+print("AUTHORIZATION_SERVER_URL", AUTHORIZATION_SERVER_URL)
+print("RESOURCE_SERVER_URL", RESOURCE_SERVER_URL)
 RESOURCE_SCOPES = []
 
 _parsed_resource_url = urlparse(str(RESOURCE_SERVER_URL))
@@ -111,9 +167,16 @@ MIXED_TOOL_SECURITY_SCHEMES = [
     },
 ]
 
+OAUTH_ONLY_SECURITY_SCHEMES = [
+    {
+        "type": "oauth2",
+        "scopes": RESOURCE_SCOPES,
+    }
+]
+
 
 mcp = FastMCP(
-    name="pizzaz-python",
+    name="authenticated-server-python",
     stateless_http=True,
 )
 
@@ -272,6 +335,7 @@ def _tool_error(message: str) -> types.ServerResult:
 @mcp._mcp_server.list_tools()
 async def _list_tools() -> List[types.Tool]:
     tool_meta = _tool_meta(CAROUSEL_WIDGET, MIXED_TOOL_SECURITY_SCHEMES)
+    past_orders_meta = _tool_meta(PAST_ORDERS_WIDGET, OAUTH_ONLY_SECURITY_SCHEMES)
     return [
         types.Tool(
             name=SEARCH_TOOL_NAME,
@@ -281,6 +345,19 @@ async def _list_tools() -> List[types.Tool]:
             _meta=tool_meta,
             securitySchemes=list(MIXED_TOOL_SECURITY_SCHEMES),
             # To disable the approval prompt for the tools
+            annotations={
+                "destructiveHint": False,
+                "openWorldHint": False,
+                "readOnlyHint": True,
+            },
+        ),
+        types.Tool(
+            name=PAST_ORDERS_TOOL_NAME,
+            title="See past orders",
+            description="Return a list of past pizza orders (OAuth required).",
+            inputSchema=PAST_ORDERS_TOOL_SCHEMA,
+            _meta=past_orders_meta,
+            securitySchemes=list(OAUTH_ONLY_SECURITY_SCHEMES),
             annotations={
                 "destructiveHint": False,
                 "openWorldHint": False,
@@ -300,7 +377,15 @@ async def _list_resources() -> List[types.Resource]:
             description=_resource_description(CAROUSEL_WIDGET),
             mimeType=MIME_TYPE,
             _meta=_tool_meta(CAROUSEL_WIDGET),
-        )
+        ),
+        types.Resource(
+            name=PAST_ORDERS_WIDGET.title,
+            title=PAST_ORDERS_WIDGET.title,
+            uri=PAST_ORDERS_WIDGET.template_uri,
+            description=_resource_description(PAST_ORDERS_WIDGET),
+            mimeType=MIME_TYPE,
+            _meta=_tool_meta(PAST_ORDERS_WIDGET),
+        ),
     ]
 
 
@@ -314,13 +399,24 @@ async def _list_resource_templates() -> List[types.ResourceTemplate]:
             description=_resource_description(CAROUSEL_WIDGET),
             mimeType=MIME_TYPE,
             _meta=_tool_meta(CAROUSEL_WIDGET),
-        )
+        ),
+        types.ResourceTemplate(
+            name=PAST_ORDERS_WIDGET.title,
+            title=PAST_ORDERS_WIDGET.title,
+            uriTemplate=PAST_ORDERS_WIDGET.template_uri,
+            description=_resource_description(PAST_ORDERS_WIDGET),
+            mimeType=MIME_TYPE,
+            _meta=_tool_meta(PAST_ORDERS_WIDGET),
+        ),
     ]
 
 
 async def _handle_read_resource(req: types.ReadResourceRequest) -> types.ServerResult:
     requested_uri = str(req.params.uri)
-    if requested_uri != CAROUSEL_WIDGET.template_uri:
+    if requested_uri not in {
+        CAROUSEL_WIDGET.template_uri,
+        PAST_ORDERS_WIDGET.template_uri,
+    }:
         return types.ServerResult(
             types.ReadResourceResult(
                 contents=[],
@@ -328,12 +424,18 @@ async def _handle_read_resource(req: types.ReadResourceRequest) -> types.ServerR
             )
         )
 
+    widget = (
+        CAROUSEL_WIDGET
+        if requested_uri == CAROUSEL_WIDGET.template_uri
+        else PAST_ORDERS_WIDGET
+    )
+
     contents = [
         types.TextResourceContents(
-            uri=CAROUSEL_WIDGET.template_uri,
+            uri=widget.template_uri,
             mimeType=MIME_TYPE,
-            text=CAROUSEL_WIDGET.html,
-            _meta=_tool_meta(CAROUSEL_WIDGET),
+            text=widget.html,
+            _meta=_tool_meta(widget),
         )
     ]
 
@@ -342,31 +444,53 @@ async def _handle_read_resource(req: types.ReadResourceRequest) -> types.ServerR
 
 async def _call_tool_request(req: types.CallToolRequest) -> types.ServerResult:
     tool_name = req.params.name
-    if tool_name != SEARCH_TOOL_NAME:
-        return _tool_error(f"Unknown tool: {req.params.name}")
 
     arguments = req.params.arguments or {}
-    meta = _tool_invocation_meta(CAROUSEL_WIDGET)
-    topping = str(arguments.get("searchTerm", "")).strip()
-
     if not _get_bearer_token_from_request():
         return _oauth_error_result(
             "Authentication required: no access token provided.",
             description="No access token was provided",
         )
 
-    return types.ServerResult(
-        types.CallToolResult(
-            content=[
-                types.TextContent(
-                    type="text",
-                    text="Rendered a pizza carousel!",
-                )
-            ],
-            structuredContent={"pizzaTopping": topping},
-            _meta=meta,
+    if tool_name == SEARCH_TOOL_NAME:
+        meta = _tool_invocation_meta(CAROUSEL_WIDGET)
+        topping = str(arguments.get("searchTerm", "")).strip()
+        return types.ServerResult(
+            types.CallToolResult(
+                content=[
+                    types.TextContent(
+                        type="text",
+                        text="Rendered a pizza carousel!",
+                    )
+                ],
+                structuredContent={"pizzaTopping": topping},
+                _meta=meta,
+            )
         )
-    )
+
+    if tool_name == PAST_ORDERS_TOOL_NAME:
+        meta = _tool_invocation_meta(PAST_ORDERS_WIDGET)
+        limit = arguments.get("limit")
+        try:
+            parsed_limit = int(limit) if limit is not None else len(PAST_ORDERS_DATA)
+        except Exception:
+            parsed_limit = len(PAST_ORDERS_DATA)
+        parsed_limit = max(1, min(parsed_limit, len(PAST_ORDERS_DATA)))
+        orders = PAST_ORDERS_DATA[:parsed_limit]
+        return types.ServerResult(
+            types.CallToolResult(
+                content=[
+                    types.TextContent(
+                        type="text",
+                        text=PAST_ORDERS_WIDGET.response_text,
+                    )
+                ],
+                structuredContent={"orders": orders},
+                _meta=meta,
+            )
+        )
+
+    return _tool_error(f"Unknown tool: {req.params.name}")
 
 
 mcp._mcp_server.request_handlers[types.CallToolRequest] = _call_tool_request
