@@ -81,7 +81,7 @@ The repository ships several demo MCP servers that highlight different widget bu
 
 - **Pizzaz (Node & Python)** – pizza-inspired collection of tools and components
 - **Solar system (Python)** – 3D solar system viewer
-- **Authenticated (Python)** – pizza carousel tool that requires OAuth
+- **Authenticated (Python)** – set of tools that require different levels of OAuth
 
 ### Pizzaz Node server
 
@@ -105,7 +105,7 @@ uvicorn pizzaz_server_python.main:app --port 8000
 python -m venv .venv
 source .venv/bin/activate
 pip install -r authenticated_server_python/requirements.txt
-python authenticated_server_python/main.py
+uvicorn authenticated_python_server.main:app --port 8000
 ```
 
 ### Solar system Python server
