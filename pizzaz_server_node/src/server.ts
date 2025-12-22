@@ -291,8 +291,9 @@ const postPath = "/mcp/messages";
 async function handleSseRequest(res: ServerResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   const server = createPizzazServer();
-  const transport = new SSEServerTransport(postPath, res);
-  const sessionId = transport.sessionId;
+// HARDCODED URL FIX
+const transport = new SSEServerTransport("https://mcp-ujqs.onrender.com/mcp/messages", res);
+const sessionId = transport.sessionId;
 
   sessions.set(sessionId, { server, transport });
 
