@@ -351,18 +351,26 @@ async function handlePostMessage(
 const portEnv = Number(process.env.PORT ?? 8000);
 const port = Number.isFinite(portEnv) ? portEnv : 8000;
 
+// --- AB HIER ALLES ERSETZEN ---
+
 const httpServer = createServer(
   async (req: IncomingMessage, res: ServerResponse) => {
+    // 1. LOGGING HINZUFÜGEN: Wir wollen sehen, wer anklopft!
+    console.log(`📞 Incoming request: ${req.method} ${req.url}`);
+
     if (!req.url) {
       res.writeHead(400).end("Missing URL");
       return;
     }
 
     const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
+    
+    // 2. SLASH FIX: Wir entfernen den letzten Schrägstrich, falls einer da ist
+    const cleanPath = url.pathname.replace(/\/$/, ""); 
 
     if (
       req.method === "OPTIONS" &&
-      (url.pathname === ssePath || url.pathname === postPath)
+      (cleanPath === ssePath || cleanPath === postPath)
     ) {
       res.writeHead(204, {
         "Access-Control-Allow-Origin": "*",
@@ -373,16 +381,20 @@ const httpServer = createServer(
       return;
     }
 
-    if (req.method === "GET" && url.pathname === ssePath) {
+    // Hier nutzen wir jetzt 'cleanPath' statt 'url.pathname'
+    if (req.method === "GET" && cleanPath === ssePath) {
+      console.log("✅ SSE Connection detected!");
       await handleSseRequest(res);
       return;
     }
 
-    if (req.method === "POST" && url.pathname === postPath) {
+    if (req.method === "POST" && cleanPath === postPath) {
+      console.log("✅ Message POST detected!");
       await handlePostMessage(req, res, url);
       return;
     }
 
+    console.log(`❌ 404 Not Found for: ${cleanPath}`);
     res.writeHead(404).end("Not Found");
   }
 );
@@ -392,10 +404,9 @@ httpServer.on("clientError", (err: Error, socket) => {
   socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
 });
 
-httpServer.listen(port, () => {
-  console.log(`Pizzaz MCP server listening on http://localhost:${port}`);
-  console.log(`  SSE stream: GET http://localhost:${port}${ssePath}`);
-  console.log(
-    `  Message post endpoint: POST http://localhost:${port}${postPath}?sessionId=...`
-  );
+// 3. HOST FIX: Wir hören explizit auf 0.0.0.0 (wichtig für Render)
+httpServer.listen(port, "0.0.0.0", () => {
+  console.log(`Pizzaz MCP server listening on port ${port}`);
+  console.log(`  SSE stream: GET /mcp`);
+  console.log(`  Message endpoint: POST /mcp/messages`);
 });
