@@ -1,6 +1,6 @@
 /**
  * Kitchen Sink Lite MCP server (Node).
- * FIXED VERSION FOR RENDER DEPLOYMENT
+ * FINAL FIXED VERSION FOR RENDER
  */
 import {
   createServer,
@@ -30,8 +30,8 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-// --- KONFIGURATION FÜR RENDER ---
-const RENDER_PUBLIC_URL = "https://mcp-ujqs.onrender.com"; // Deine echte URL
+// --- WICHTIG: DEINE RENDER URL ---
+const RENDER_PUBLIC_URL = "https://mcp-ujqs.onrender.com"; 
 // --------------------------------
 
 type WidgetPayload = {
@@ -42,42 +42,35 @@ type WidgetPayload = {
 };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT_DIR = path.resolve(__dirname, "..", "..");
+const ROOT_DIR = path.resolve(__dirname, "..", ".."); 
 const ASSETS_DIR = path.resolve(ROOT_DIR, "assets");
 
 const TEMPLATE_URI = "ui://widget/kitchen-sink-lite.html";
 const MIME_TYPE = "text/html+skybridge";
 
 function readWidgetHtml(): string {
-  if (!fs.existsSync(ASSETS_DIR)) {
-    throw new Error(
-      `Widget assets not found. Expected directory ${ASSETS_DIR}. Run "pnpm run build" before starting the server.`
-    );
-  }
-
-  const directPath = path.join(ASSETS_DIR, "kitchen-sink-lite.html");
   let htmlContents: string | null = null;
-
-  if (fs.existsSync(directPath)) {
-    htmlContents = fs.readFileSync(directPath, "utf8");
-  } else {
-    const candidates = fs
-      .readdirSync(ASSETS_DIR)
-      .filter(
-        (file) =>
-          file.startsWith("kitchen-sink-lite-") && file.endsWith(".html")
-      )
-      .sort();
-    const fallback = candidates[candidates.length - 1];
-    if (fallback) {
-      htmlContents = fs.readFileSync(path.join(ASSETS_DIR, fallback), "utf8");
-    }
+  
+  try {
+      if (fs.existsSync(ASSETS_DIR)) {
+        const directPath = path.join(ASSETS_DIR, "kitchen-sink-lite.html");
+        if (fs.existsSync(directPath)) {
+            htmlContents = fs.readFileSync(directPath, "utf8");
+        } else {
+            const candidates = fs.readdirSync(ASSETS_DIR)
+            .filter(f => f.startsWith("kitchen-sink-lite") && f.endsWith(".html"))
+            .sort();
+            if (candidates.length > 0) {
+                htmlContents = fs.readFileSync(path.join(ASSETS_DIR, candidates[candidates.length - 1]), "utf8");
+            }
+        }
+      }
+  } catch (e) {
+      console.warn("Warning: Could not read assets directory.", e);
   }
 
   if (!htmlContents) {
-    throw new Error(
-      `Widget HTML for "kitchen-sink-lite" not found in ${ASSETS_DIR}. Run "pnpm run build" to generate the assets.`
-    );
+    return "<div><h1>Widget Placeholder</h1><p>Please run pnpm build to generate assets.</p></div>";
   }
 
   return htmlContents;
@@ -251,7 +244,6 @@ function createKitchenSinkServer(): Server {
             `Processed at ${processedAt}. Echo (uppercased): ${echoed}.`,
           fromTool: "kitchen-sink-show",
         };
-        // Demonstrate a tool transforming input before returning structured content.
         return {
           content: [
             {
@@ -297,67 +289,115 @@ const ssePath = "/mcp";
 const postPath = "/mcp/messages";
 
 async function handleSseRequest(res: ServerResponse) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  const transport = new SSEServerTransport(`${RENDER_PUBLIC_URL}${postPath}`, res);
+  const sessionId = transport.sessionId;
   const server = createKitchenSinkServer();
-  
-  // --- AB HIER ALLES ERSETZEN (bis Dateiende) ---
+
+  sessions.set(sessionId, { server, transport });
+
+  transport.onclose = async () => {
+    sessions.delete(sessionId);
+    await server.close();
+  };
+
+  transport.onerror = (error) => {
+    console.error("SSE transport error", error);
+  };
+
+  try {
+    await server.connect(transport);
+  } catch (error) {
+    sessions.delete(sessionId);
+    console.error("Failed to start SSE session", error);
+    if (!res.headersSent) {
+      res.writeHead(500).end("Failed to establish SSE connection");
+    }
+  }
+}
+
+async function handlePostMessage(
+  req: IncomingMessage,
+  res: ServerResponse,
+  url: URL
+) {
+  const sessionId = url.searchParams.get("sessionId");
+
+  if (!sessionId) {
+    res.writeHead(400).end("Missing sessionId query parameter");
+    return;
+  }
+
+  const session = sessions.get(sessionId);
+
+  if (!session) {
+    res.writeHead(404).end("Unknown session");
+    return;
+  }
+
+  try {
+    await session.transport.handlePostMessage(req, res);
+  } catch (error) {
+    console.error("Failed to process message", error);
+    if (!res.headersSent) {
+      res.writeHead(500).end("Failed to process message");
+    }
+  }
+}
+
+const portEnv = Number(process.env.PORT ?? 8000);
+const port = Number.isFinite(portEnv) ? portEnv : 8000;
 
 const httpServer = createServer(
   async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? "", `http://${req.headers.host ?? "localhost"}`);
-    // Entfernt Slash am Ende und macht den Pfad sauber
     const cleanPath = url.pathname.replace(/\/$/, ""); 
 
-    // 1. GLOBALER FIX: CORS Header für ALLE Anfragen setzen!
-    // Damit erlauben wir ChatGPT immer den Zugriff, egal wo es anklopft.
+    // --- GLOBALER CORS FIX ---
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "content-type");
 
     console.log(`📞 Incoming request: ${req.method} ${cleanPath}`);
 
-    // 2. OPTIONS (Browser-Voranfrage)
+    // OPTIONS
     if (req.method === "OPTIONS") {
       res.writeHead(204).end();
       return;
     }
 
-    // 3. HEALTH CHECK (Startseite)
-    // Damit der "404 Not Found" Fehler im Log verschwindet
+    // HEALTH CHECK
     if (cleanPath === "" || cleanPath === "/") {
       res.writeHead(200).end("Kitchen Sink MCP Server is running! 🚀");
       return;
     }
 
-    // 4. SSE STREAM (Verbindungsaufbau)
+    // SSE STREAM
     if (req.method === "GET" && cleanPath === ssePath) {
       console.log("✅ SSE Connection detected!");
       await handleSseRequest(res);
       return;
     }
 
-    // 5. MESSAGES (Nachrichten vom Chat)
+    // MESSAGES
     if (req.method === "POST" && cleanPath === postPath) {
       console.log("✅ Message received (standard endpoint)!");
       await handlePostMessage(req, res, url);
       return;
     }
 
-    // 6. PROBE / PING FIX (Der Grund für deinen Timeout)
-    // ChatGPT sendet manchmal POST an /mcp um zu testen.
+    // PROBE / PING FIX
     if (req.method === "POST" && cleanPath === ssePath) {
         if (url.searchParams.has("sessionId")) {
             console.log("✅ Message received (via base path)!");
             await handlePostMessage(req, res, url);
         } else {
-            console.log("✅ Ping received -> Sending 200 OK with Headers");
-            // Wir haben die Header oben schon gesetzt (Zeile 10-12), also nur noch OK senden
+            console.log("✅ Ping received -> Sending 200 OK");
             res.writeHead(200).end("OK");
         }
         return;
     }
 
-    // 7. Alles andere
+    // 404
     console.log(`❌ 404 Not Found: ${cleanPath}`);
     res.writeHead(404).end("Not Found");
   }
@@ -369,6 +409,6 @@ httpServer.on("clientError", (err: Error, socket) => {
 });
 
 httpServer.listen(port, "0.0.0.0", () => {
-  console.log(`\n\n✅ KITCHEN SINK LITE (CORS FIXED) listening on port ${port}`);
+  console.log(`\n\n✅ KITCHEN SINK LITE (FULL FIX) listening on port ${port}`);
   console.log(`👉 Your URL: ${RENDER_PUBLIC_URL}${ssePath}\n\n`);
 });
