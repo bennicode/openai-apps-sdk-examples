@@ -360,25 +360,20 @@ async function handlePostMessage(
 const portEnv = Number(process.env.PORT ?? 8000);
 const port = Number.isFinite(portEnv) ? portEnv : 8000;
 
+
+// --- AB HIER ERSETZEN ---
+
 const httpServer = createServer(
   async (req: IncomingMessage, res: ServerResponse) => {
-    if (!req.url) {
-      res.writeHead(400).end("Missing URL");
-      return;
-    }
-    
-    // FIX 2: LOGGING DER ANFRAGE
-    console.log(`📞 Incoming request: ${req.method} ${req.url}`);
+    // URL normalisieren
+    const url = new URL(req.url ?? "", `http://${req.headers.host ?? "localhost"}`);
+    const cleanPath = url.pathname.replace(/\/$/, ""); // Slash am Ende entfernen
 
-    const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
-    
-    // FIX 3: SLASH-TOLERANZ (entfernt "/" am Ende)
-    const cleanPath = url.pathname.replace(/\/$/, "");
+    // LOGGING: Wir wollen alles sehen
+    console.log(`📞 Incoming request: ${req.method} ${cleanPath}`);
 
-    if (
-      req.method === "OPTIONS" &&
-      (cleanPath === ssePath || cleanPath === postPath)
-    ) {
+    // 1. CORS & OPTIONS (Wichtig für ChatGPT)
+    if (req.method === "OPTIONS") {
       res.writeHead(204, {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -388,18 +383,34 @@ const httpServer = createServer(
       return;
     }
 
+    // 2. SSE STREAM (Das Herzstück)
     if (req.method === "GET" && cleanPath === ssePath) {
       console.log("✅ SSE Connection established!");
       await handleSseRequest(res);
       return;
     }
 
+    // 3. MESSAGES (Die normalen Nachrichten)
     if (req.method === "POST" && cleanPath === postPath) {
-      console.log("✅ Message received!");
+      console.log("✅ Message received (endpoint)!");
       await handlePostMessage(req, res, url);
       return;
     }
 
+    // 4. DER FIX: POST auf /mcp auch erlauben!
+    // ChatGPT probiert das manchmal als Test oder Fallback.
+    if (req.method === "POST" && cleanPath === ssePath) {
+        if (url.searchParams.has("sessionId")) {
+            console.log("✅ Message received (via base path)!");
+            await handlePostMessage(req, res, url);
+        } else {
+            console.log("✅ Probe/Ping received -> Sending 200 OK");
+            res.writeHead(200).end("OK");
+        }
+        return;
+    }
+
+    // 5. Alles andere ist wirklich ein 404
     console.log(`❌ 404 Not Found: ${cleanPath}`);
     res.writeHead(404).end("Not Found");
   }
@@ -411,7 +422,7 @@ httpServer.on("clientError", (err: Error, socket) => {
 });
 
 httpServer.listen(port, "0.0.0.0", () => {
-  console.log(`\n\n✅ KITCHEN SINK LITE (FIXED VERSION) listening on port ${port}`);
+  console.log(`\n\n✅ KITCHEN SINK LITE (FINAL FIX) listening on port ${port}`);
   console.log(`👉 SSE URL: ${RENDER_PUBLIC_URL}${ssePath}`);
-  console.log(`👉 MSG URL: ${RENDER_PUBLIC_URL}${postPath}\n\n`);
+  console.log(`\n\n`);
 });
