@@ -1,12 +1,6 @@
 /**
  * Kitchen Sink Lite MCP server (Node).
- *
- * Serves the kitchen-sink-lite widget HTML and exposes two tools:
- * - kitchen-sink-show: renders the widget with structured content, adding a processedAt/echoed demo.
- * - kitchen-sink-refresh: lightweight echo tool called from the widget via callTool.
- *
- * Uses @modelcontextprotocol/sdk over SSE transport. Make sure assets are built
- * (pnpm run build) so the widget HTML is available in /assets before starting.
+ * FIXED VERSION FOR RENDER DEPLOYMENT
  */
 import {
   createServer,
@@ -35,6 +29,10 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+
+// --- KONFIGURATION FÜR RENDER ---
+const RENDER_PUBLIC_URL = "https://mcp-ujqs.onrender.com"; // Deine echte URL
+// --------------------------------
 
 type WidgetPayload = {
   message: string;
@@ -301,7 +299,9 @@ const postPath = "/mcp/messages";
 async function handleSseRequest(res: ServerResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   const server = createKitchenSinkServer();
-  const transport = new SSEServerTransport(postPath, res);
+  
+  // FIX 1: HIER NUTZEN WIR JETZT DIE ECHTE RENDER-URL STATT NUR DEM PFAD
+  const transport = new SSEServerTransport(`${RENDER_PUBLIC_URL}${postPath}`, res);
   const sessionId = transport.sessionId;
 
   sessions.set(sessionId, { server, transport });
@@ -366,12 +366,18 @@ const httpServer = createServer(
       res.writeHead(400).end("Missing URL");
       return;
     }
+    
+    // FIX 2: LOGGING DER ANFRAGE
+    console.log(`📞 Incoming request: ${req.method} ${req.url}`);
 
     const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
+    
+    // FIX 3: SLASH-TOLERANZ (entfernt "/" am Ende)
+    const cleanPath = url.pathname.replace(/\/$/, "");
 
     if (
       req.method === "OPTIONS" &&
-      (url.pathname === ssePath || url.pathname === postPath)
+      (cleanPath === ssePath || cleanPath === postPath)
     ) {
       res.writeHead(204, {
         "Access-Control-Allow-Origin": "*",
@@ -382,16 +388,19 @@ const httpServer = createServer(
       return;
     }
 
-    if (req.method === "GET" && url.pathname === ssePath) {
+    if (req.method === "GET" && cleanPath === ssePath) {
+      console.log("✅ SSE Connection established!");
       await handleSseRequest(res);
       return;
     }
 
-    if (req.method === "POST" && url.pathname === postPath) {
+    if (req.method === "POST" && cleanPath === postPath) {
+      console.log("✅ Message received!");
       await handlePostMessage(req, res, url);
       return;
     }
 
+    console.log(`❌ 404 Not Found: ${cleanPath}`);
     res.writeHead(404).end("Not Found");
   }
 );
@@ -401,10 +410,8 @@ httpServer.on("clientError", (err: Error, socket) => {
   socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
 });
 
-httpServer.listen(port, () => {
-  console.log(`Kitchen Sink MCP server listening on http://localhost:${port}`);
-  console.log(`  SSE stream: GET http://localhost:${port}${ssePath}`);
-  console.log(
-    `  Message post endpoint: POST http://localhost:${port}${postPath}?sessionId=...`
-  );
+httpServer.listen(port, "0.0.0.0", () => {
+  console.log(`\n\n✅ KITCHEN SINK LITE (FIXED VERSION) listening on port ${port}`);
+  console.log(`👉 SSE URL: ${RENDER_PUBLIC_URL}${ssePath}`);
+  console.log(`👉 MSG URL: ${RENDER_PUBLIC_URL}${postPath}\n\n`);
 });
